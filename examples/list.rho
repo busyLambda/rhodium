@@ -1,0 +1,13 @@
+import std/clang/types/opaque_ptr
+
+# std/collections/List - already inside the prelude
+type List[T] = { # Record
+  capacity u32
+  length   u32
+  head     opaque_ptr
+
+  # If there is a var decl inside of Record or any type for that matter it is an associated global as opposed to a field
+  head = fn(list List[T]) Maybe[T] -> match list # Can decouple list because List has contract signed: SeqPattern -> syntax sugar for calling it's fucntions
+  | [x:...] -> Something x
+  | _       -> Nothing
+}
