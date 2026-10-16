@@ -1,0 +1,6 @@
+add = fn(a i32, b i32) i32 -> a + b
+
+f = fn() never -> do
+  n = 1 + 2
+  n / 3
+end

@@ -1,0 +1,7 @@
+import mylib/helper
+import mylib/other/{x, p}
+
+main = fn() never -> do
+  res = helper::add(x, p)
+  res
+end
