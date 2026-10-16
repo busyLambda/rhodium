@@ -26,6 +26,7 @@ rule token = parse
   | "match" { MATCH }
   | "->" { ARROW }
   | "..." { ELLIPSIS }
+  | "::" { COLONCOLON }
   | '=' { EQ }
   | '|' { BAR }
   | ':' { COLON }
@@ -38,6 +39,7 @@ rule token = parse
   | ']' { RBRACK }
   | '+' { PLUS }
   | '/' { SLASH }
+  | '*' { STAR }
   | '_' { UNDERSCORE }
   | digit+ as n
       { match int_of_string_opt n with
@@ -55,8 +57,6 @@ let pending_newline : Loc.t option ref = ref None
 let reset () =
   Queue.clear queue;
   pending_newline := None
-
-let lexeme loc text = (text, loc)
 
 let rec next_lexeme lexbuf =
   if not (Queue.is_empty queue) then Queue.pop queue
@@ -84,5 +84,7 @@ let rec next_lexeme lexbuf =
             (NEWLINE, "\n", nloc)
         | None -> (tok, text, loc))
 
-let next lexbuf = let tok, _, _ = next_lexeme lexbuf in tok
+let next lexbuf =
+  let tok, _, _ = next_lexeme lexbuf in
+  tok
 }

@@ -1,4 +1,7 @@
-let app head args = (Printf.sprintf : ('a, unit, string) format -> 'a) "(%s%s)" head (String.concat "" (List.map (fun a -> " " ^ a) args))
+let app head args =
+  Printf.sprintf "(%s%s)" head (String.concat "" (List.map (fun a -> " " ^ a) args))
+
+let binop_to_string = function Ast.Add -> "+" | Ast.Div -> "/"
 
 let rec ty = function
   | Ast.TName (n, []) -> n
@@ -19,7 +22,7 @@ let rec expr = function
       Printf.sprintf "(match %s %s)" (expr e)
         (String.concat " "
            (List.map (fun (p, b) -> Printf.sprintf "(%s %s)" (expr p) (expr b)) arms))
-  | Ast.EBinop (Ast.Add, a, b) -> Printf.sprintf "(+ %s %s)" (expr a) (expr b)
+  | Ast.EBinop (op, a, b) -> Printf.sprintf "(%s %s %s)" (binop_to_string op) (expr a) (expr b)
   | Ast.EWildcard -> "_"
   | Ast.EListHead e -> Printf.sprintf "[%s:...]" (expr e)
 
@@ -33,11 +36,23 @@ let member = function
   | Ast.MField (n, t) -> Printf.sprintf "(field %s %s)" n (ty t)
   | Ast.MGlobal (n, e) -> Printf.sprintf "(global %s %s)" n (expr e)
 
+let rec sel = function
+  | Ast.SelName x -> x
+  | Ast.SelGlob -> "*"
+  | Ast.SelGroup items -> Printf.sprintf "{%s}" (String.concat ", " (List.map sel items))
+  | Ast.SelPath (x, s) -> Printf.sprintf "%s/%s" x (sel s)
+
+let import (i : Ast.import_decl) =
+  match i.sel with
+  | None -> Printf.sprintf "(import %s)" i.path
+  | Some Ast.SelGlob -> Printf.sprintf "(import %s/*)" i.path
+  | Some s -> Printf.sprintf "(import %s/%s)" i.path (sel s)
+
 let decl = function
   | Ast.DBind (x, e) -> Printf.sprintf "(let %s %s)" x (expr e)
   | Ast.DType (n, ps, ms) ->
       Printf.sprintf "(type %s[%s] %s)" n (String.concat ", " ps)
         (String.concat " " (List.map member ms))
-  | Ast.DImport p -> Printf.sprintf "(import %s)" p
+  | Ast.DImport i -> import i
 
 let program ds = String.concat "\n" (List.map decl ds)

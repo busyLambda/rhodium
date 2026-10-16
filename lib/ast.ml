@@ -4,7 +4,7 @@ type ty =
 
 type param = { name : string; ty : ty }
 
-type binop = Add
+type binop = Add | Div
 
 type expr =
   | EInt of int
@@ -24,9 +24,17 @@ and stmt = SAssign of expr * expr | SExpr of expr
 
 type member = MField of string * ty | MGlobal of string * expr
 
+type import_sel =
+  | SelName of string
+  | SelGlob
+  | SelGroup of import_sel list
+  | SelPath of string * import_sel
+
+type import_decl = { path : string; sel : import_sel option }
+
 type decl =
   | DBind of string * expr
   | DType of string * string list * member list
-  | DImport of string
+  | DImport of import_decl
 
 type program = decl list
