@@ -65,9 +65,25 @@ let check_cmd =
   in
   Cmd.v (Cmd.info "check" ~doc) Term.(const run $ files)
 
+let graph_cmd =
+  let doc = "Resolve imports transitively and print the module dependency graph." in
+  let run paths =
+    let failed =
+      List.fold_left
+        (fun failed path ->
+          let graph = Deps.build ~root:path in
+          List.iter (fun d -> prerr_endline (Diagnostics.to_string d)) graph.diagnostics;
+          print_endline (Deps.render graph);
+          failed || graph.diagnostics <> [])
+        false paths
+    in
+    if failed then exit Cmd.Exit.some_error
+  in
+  Cmd.v (Cmd.info "graph" ~doc) Term.(const run $ files)
+
 let () =
   exit
     (Cmd.eval
        (Cmd.group
           (Cmd.info "rhodium" ~version:"0.1.0" ~doc:"The Rhodium compiler.")
-          [ ast_cmd; tokens_cmd; check_cmd ]))
+          [ ast_cmd; tokens_cmd; check_cmd; graph_cmd ]))
