@@ -1,7 +1,25 @@
 let app head args =
   Printf.sprintf "(%s%s)" head (String.concat "" (List.map (fun a -> " " ^ a) args))
 
-let binop_to_string = function Ast.Add -> "+" | Ast.Div -> "/"
+let binop_to_string = function
+  | Ast.Pipe -> "|>"
+  | Ast.Nor -> "nor"
+  | Ast.Or -> "or"
+  | Ast.Xor -> "xor"
+  | Ast.And -> "and"
+  | Ast.Eq -> "is"
+  | Ast.Neq -> "isnt"
+  | Ast.Lt -> "<"
+  | Ast.Le -> "<="
+  | Ast.Gt -> ">"
+  | Ast.Ge -> ">="
+  | Ast.Add -> "+"
+  | Ast.Sub -> "-"
+  | Ast.Mul -> "*"
+  | Ast.Div -> "/"
+  | Ast.Mod -> "%"
+
+let unop_to_string = function Ast.Neg -> "-" | Ast.Not -> "not"
 
 let rec ty = function
   | Ast.TName (n, []) -> n
@@ -23,6 +41,7 @@ let rec expr = function
         (String.concat " "
            (List.map (fun (p, b) -> Printf.sprintf "(%s %s)" (expr p) (expr b)) arms))
   | Ast.EBinop (op, a, b) -> Printf.sprintf "(%s %s %s)" (binop_to_string op) (expr a) (expr b)
+  | Ast.EUnop (op, a) -> Printf.sprintf "(%s %s)" (unop_to_string op) (expr a)
   | Ast.EWildcard -> "_"
   | Ast.EListHead e -> Printf.sprintf "[%s:...]" (expr e)
 

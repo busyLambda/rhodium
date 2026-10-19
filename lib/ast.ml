@@ -4,7 +4,25 @@ type ty =
 
 type param = { name : string; ty : ty }
 
-type binop = Add | Div
+type binop =
+  | Pipe
+  | Nor
+  | Or
+  | Xor
+  | And
+  | Eq
+  | Neq
+  | Lt
+  | Le
+  | Gt
+  | Ge
+  | Add
+  | Sub
+  | Mul
+  | Div
+  | Mod
+
+type unop = Neg | Not
 
 type expr =
   | EInt of int
@@ -17,6 +35,7 @@ type expr =
   | EDo of stmt list
   | EMatch of expr * (expr * expr) list
   | EBinop of binop * expr * expr
+  | EUnop of unop * expr
   | EWildcard
   | EListHead of expr
 

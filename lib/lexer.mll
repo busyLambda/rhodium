@@ -24,9 +24,19 @@ rule token = parse
   | "do" { DO }
   | "end" { END }
   | "match" { MATCH }
+  | "not" { NOT }
+  | "and" { AND }
+  | "or" { OR }
+  | "nor" { NOR }
+  | "xor" { XOR }
+  | "isnt" { ISNT }
+  | "is" { IS }
   | "->" { ARROW }
   | "..." { ELLIPSIS }
   | "::" { COLONCOLON }
+  | "|>" { PIPE }
+  | "<=" { LE }
+  | ">=" { GE }
   | '=' { EQ }
   | '|' { BAR }
   | ':' { COLON }
@@ -38,8 +48,12 @@ rule token = parse
   | '[' { LBRACK }
   | ']' { RBRACK }
   | '+' { PLUS }
-  | '/' { SLASH }
+  | '-' { MINUS }
   | '*' { STAR }
+  | '/' { SLASH }
+  | '%' { PERCENT }
+  | '<' { LT }
+  | '>' { GT }
   | '_' { UNDERSCORE }
   | digit+ as n
       { match int_of_string_opt n with

@@ -8,6 +8,6 @@ type List[T] = { # Record
 
   # If there is a var decl inside of Record or any type for that matter it is an associated global as opposed to a field
   head = fn(list List[T]) Maybe[T] -> match list # Can decouple list because List has contract signed: SeqPattern -> syntax sugar for calling it's fucntions
-  | [x:...] -> Something x
+  | [x:...] -> Something(x)
   | _       -> Nothing
 }

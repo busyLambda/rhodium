@@ -1,9 +1,20 @@
 %token <int> INT
 %token <string> IDENT CTOR
 %token IMPORT TYPE FN DO END MATCH
+%token NOT AND OR NOR XOR IS ISNT
 %token ARROW EQ BAR COLON COLONCOLON COMMA ELLIPSIS UNDERSCORE STAR
 %token LPAREN RPAREN LBRACE RBRACE LBRACK RBRACK
-%token PLUS SLASH NEWLINE EOF
+%token PIPE LT LE GT GE PLUS MINUS SLASH PERCENT
+%token NEWLINE EOF
+
+%left PIPE
+%left NOR
+%left OR XOR
+%left AND
+%nonassoc IS ISNT
+%nonassoc LT LE GT GE
+%left PLUS MINUS
+%left STAR SLASH PERCENT
 
 %start <Ast.program> program
 
@@ -15,7 +26,8 @@ program:
 decls:
   | { [] }
   | ds = decls; NEWLINE { ds }
-  | ds = decls; d = decl { d :: ds }
+  | d = decl { [ d ] }
+  | ds = decls; NEWLINE; d = decl { d :: ds }
 
 decl:
   | i = import_decl { i }
@@ -54,30 +66,48 @@ record:
 members:
   | { [] }
   | ms = members; NEWLINE { ms }
-  | ms = members; m = member { m :: ms }
+  | m = member { [ m ] }
+  | ms = members; NEWLINE; m = member { m :: ms }
 
 member:
   | n = name; t = ty { Ast.MField (n, t) }
   | n = name; EQ; e = expr { Ast.MGlobal (n, e) }
 
 expr:
-  | e = expr; PLUS; t = term { Ast.EBinop (Ast.Add, e, t) }
-  | t = term { t }
-
-term:
-  | t = term; SLASH; a = atom { Ast.EBinop (Ast.Div, t, a) }
+  | e1 = expr; op = binop; e2 = expr { Ast.EBinop (op, e1, e2) }
   | a = atom { a }
+
+%inline binop:
+  | PIPE { Ast.Pipe }
+  | NOR { Ast.Nor }
+  | OR { Ast.Or }
+  | XOR { Ast.Xor }
+  | AND { Ast.And }
+  | IS { Ast.Eq }
+  | ISNT { Ast.Neq }
+  | LT { Ast.Lt }
+  | LE { Ast.Le }
+  | GT { Ast.Gt }
+  | GE { Ast.Ge }
+  | PLUS { Ast.Add }
+  | MINUS { Ast.Sub }
+  | STAR { Ast.Mul }
+  | SLASH { Ast.Div }
+  | PERCENT { Ast.Mod }
 
 atom:
   | n = INT { Ast.EInt n }
   | LPAREN; RPAREN { Ast.EUnit }
   | LPAREN; e = expr; RPAREN { e }
+  | MINUS; a = atom { Ast.EUnop (Ast.Neg, a) }
+  | NOT; a = atom { Ast.EUnop (Ast.Not, a) }
   | x = IDENT; args = args { Ast.ECall (Ast.EVar x, args) }
   | x = IDENT { Ast.EVar x }
   | x = IDENT; COLONCOLON; rest = qname; args = args
       { Ast.ECall (Ast.EVar (x ^ "::" ^ rest), args) }
   | x = IDENT; COLONCOLON; rest = qname { Ast.EVar (x ^ "::" ^ rest) }
-  | c = CTOR; args = list(atom) { Ast.ECtor (c, args) }
+  | c = CTOR; args = args { Ast.ECtor (c, args) }
+  | c = CTOR { Ast.ECtor (c, []) }
   | c = CTOR; COLONCOLON; rest = qname; args = args
       { Ast.ECall (Ast.EVar (c ^ "::" ^ rest), args) }
   | c = CTOR; COLONCOLON; rest = qname { Ast.EVar (c ^ "::" ^ rest) }
@@ -108,7 +138,8 @@ do_block:
 stmts:
   | { [] }
   | ss = stmts; NEWLINE { ss }
-  | ss = stmts; s = stmt { s :: ss }
+  | s = stmt { [ s ] }
+  | ss = stmts; NEWLINE; s = stmt { s :: ss }
 
 stmt:
   | p = expr; EQ; e = expr { Ast.SAssign (p, e) }
