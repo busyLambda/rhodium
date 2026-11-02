@@ -21,12 +21,14 @@ let binop_to_string = function
 
 let unop_to_string = function Ast.Neg -> "-" | Ast.Not -> "not"
 
-let rec ty = function
+let rec ty (t : Ast.ty) =
+  match t.desc with
   | Ast.TName (n, []) -> n
   | Ast.TName (n, args) -> Printf.sprintf "%s[%s]" n (String.concat ", " (List.map ty args))
   | Ast.TTuple ts -> Printf.sprintf "{%s}" (String.concat ", " (List.map ty ts))
 
-let rec expr = function
+let rec expr (e : Ast.expr) =
+  match e.desc with
   | Ast.EInt n -> string_of_int n
   | Ast.EUnit -> "()"
   | Ast.EVar x -> x
@@ -37,9 +39,7 @@ let rec expr = function
       Printf.sprintf "(fn (%s) %s %s)" (String.concat ", " (List.map param ps)) (ty r) (expr b)
   | Ast.EDo ss -> Printf.sprintf "(do %s)" (String.concat " " (List.map stmt ss))
   | Ast.EMatch (e, arms) ->
-      Printf.sprintf "(match %s %s)" (expr e)
-        (String.concat " "
-           (List.map (fun (p, b) -> Printf.sprintf "(%s %s)" (expr p) (expr b)) arms))
+      Printf.sprintf "(match %s %s)" (expr e) (String.concat " " (List.map arm arms))
   | Ast.EBinop (op, a, b) -> Printf.sprintf "(%s %s %s)" (binop_to_string op) (expr a) (expr b)
   | Ast.EUnop (op, a) -> Printf.sprintf "(%s %s)" (unop_to_string op) (expr a)
   | Ast.EWildcard -> "_"
@@ -47,27 +47,33 @@ let rec expr = function
 
 and param (p : Ast.param) = Printf.sprintf "%s %s" p.name (ty p.ty)
 
-and stmt = function
+and stmt (s : Ast.stmt) =
+  match s.desc with
   | Ast.SAssign (p, e) -> Printf.sprintf "(= %s %s)" (expr p) (expr e)
   | Ast.SExpr e -> expr e
 
-let member = function
+and arm (a : Ast.arm) = Printf.sprintf "(%s %s)" (expr a.pattern) (expr a.body)
+
+let member (m : Ast.member) =
+  match m.desc with
   | Ast.MField (n, t) -> Printf.sprintf "(field %s %s)" n (ty t)
   | Ast.MGlobal (n, e) -> Printf.sprintf "(global %s %s)" n (expr e)
 
-let rec sel = function
+let rec sel (s : Ast.import_sel) =
+  match s.desc with
   | Ast.SelName x -> x
   | Ast.SelGlob -> "*"
   | Ast.SelGroup items -> Printf.sprintf "{%s}" (String.concat ", " (List.map sel items))
-  | Ast.SelPath (x, s) -> Printf.sprintf "%s/%s" x (sel s)
+  | Ast.SelPath (x, sub) -> Printf.sprintf "%s/%s" x (sel sub)
 
 let import (i : Ast.import_decl) =
   match i.sel with
   | None -> Printf.sprintf "(import %s)" i.path
-  | Some Ast.SelGlob -> Printf.sprintf "(import %s/*)" i.path
+  | Some { Ast.desc = Ast.SelGlob; _ } -> Printf.sprintf "(import %s/*)" i.path
   | Some s -> Printf.sprintf "(import %s/%s)" i.path (sel s)
 
-let decl = function
+let decl (d : Ast.decl) =
+  match d.desc with
   | Ast.DBind (x, e) -> Printf.sprintf "(let %s %s)" x (expr e)
   | Ast.DType (n, ps, ms) ->
       Printf.sprintf "(type %s[%s] %s)" n (String.concat ", " ps)

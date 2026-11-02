@@ -24,7 +24,8 @@ let build ~root =
           let search = Filename.dirname file :: [ root_dir ] in
           let edges =
             program
-            |> List.filter_map (function Ast.DImport spec -> Some spec | _ -> None)
+            |> List.filter_map (fun (d : Ast.decl) ->
+                   match d.desc with Ast.DImport spec -> Some spec | _ -> None)
             |> List.map (fun spec -> { spec; resolved = resolve ~search spec.path })
           in
           let unresolved =

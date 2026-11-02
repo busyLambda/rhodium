@@ -9,6 +9,31 @@ let parse source =
 
 let check name expected source = Alcotest.(check string) name expected (Pprint.program (parse source))
 
+let span_lines (l : Loc.t) = (l.start_line, l.end_line)
+let span_cols (l : Loc.t) = (l.start_col, l.end_col)
+
+let test_spans_are_tight () =
+  match parse "a = 1 + 2 * 3" with
+  | [ { Ast.desc = Ast.DBind (_, rhs); span = dspan } ] -> (
+      Alcotest.(check (pair int int)) "decl spans the binding" (1, 14) (span_cols dspan);
+      Alcotest.(check (pair int int)) "rhs spans the whole sum" (5, 14) (span_cols rhs.Ast.span);
+      match rhs.Ast.desc with
+      | Ast.EBinop (Ast.Add, _, { Ast.desc = Ast.EBinop (Ast.Mul, _, _); span; _ }) ->
+          Alcotest.(check (pair int int)) "nested factor stays tight" (9, 14) (span_cols span)
+      | _ -> Alcotest.fail "expected a nested multiplication")
+  | _ -> Alcotest.fail "expected one binding"
+
+let test_block_spans_cover_delimiters () =
+  match parse "f = fn() never -> do\n  x = 1\nend" with
+  | [ { Ast.desc = Ast.DBind (_, { Ast.desc = Ast.EFn (_, _, body); span = fspan }); _ } ] -> (
+      Alcotest.(check (pair int int)) "fn spans to end" (1, 3) (span_lines fspan);
+      match body.Ast.desc with
+      | Ast.EDo [ s ] ->
+          Alcotest.(check (pair int int)) "do spans to end" (1, 3) (span_lines body.Ast.span);
+          Alcotest.(check (pair int int)) "stmt stays inside" (2, 2) (span_lines s.Ast.span)
+      | _ -> Alcotest.fail "expected a do block with one statement")
+  | _ -> Alcotest.fail "expected one binding"
+
 let test_fn () =
   check "function binding" "(let add (fn (a i32, b i32) i32 (+ a b)))"
     "add = fn(a i32, b i32) i32 -> a + b"
@@ -272,5 +297,10 @@ let () =
         [
           Alcotest.test_case "token positions" `Quick test_token_positions;
           Alcotest.test_case "newline before bar" `Quick test_newline_suppressed_before_bar;
+        ] );
+      ( "spans",
+        [
+          Alcotest.test_case "tight subexpressions" `Quick test_spans_are_tight;
+          Alcotest.test_case "block spans delimiters" `Quick test_block_spans_cover_delimiters;
         ] );
     ]
