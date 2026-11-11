@@ -51,17 +51,36 @@ let tokens_cmd =
   in
   Cmd.v (Cmd.info "tokens" ~doc) Term.(const run $ files)
 
+let render_diagnostic sources (d : Diagnostics.t) =
+  match d.loc with
+  | Some loc -> (
+      match List.assoc_opt loc.Loc.file sources with
+      | Some source -> Diagnostics.render ~source d
+      | None -> Diagnostics.to_string d)
+  | None -> Diagnostics.to_string d
+
 let check_cmd =
-  let doc = "Parse files and report diagnostics without output." in
+  let doc = "Parse files and their imports, reporting diagnostics." in
   let run paths =
-    run_over_files
-      (fun (parsed : Pipeline.parsed) ->
-        match parsed.result with
-        | Ok _ ->
-            Printf.printf "%s: ok\n" parsed.filename;
-            true
-        | Error _ -> false)
-      paths
+    let failed =
+      List.fold_left
+        (fun failed path ->
+          let build = Build.create () in
+          let graph = Build.discover build ~root:path in
+          let sources = Build.sources build in
+          let files = List.map (fun (n : Deps.node) -> n.file) graph.Deps.nodes in
+          let diagnostics =
+            List.concat_map (fun file -> Node.get (Build.diagnostics build file)) files
+          in
+          List.iter (fun d -> prerr_endline (render_diagnostic sources d)) diagnostics;
+          if diagnostics = [] then (
+            Printf.printf "%s: ok (%d file(s) parsed, %d parse(s) executed)\n" path
+              (List.length files) (Build.parses build);
+            failed)
+          else true)
+        false paths
+    in
+    if failed then exit Cmd.Exit.some_error
   in
   Cmd.v (Cmd.info "check" ~doc) Term.(const run $ files)
 
@@ -71,7 +90,7 @@ let graph_cmd =
     let failed =
       List.fold_left
         (fun failed path ->
-          let graph = Deps.build ~root:path in
+          let graph = Build.discover (Build.create ()) ~root:path in
           List.iter (fun d -> prerr_endline (Diagnostics.to_string d)) graph.diagnostics;
           print_endline (Deps.render graph);
           failed || graph.diagnostics <> [])

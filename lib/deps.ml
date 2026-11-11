@@ -11,15 +11,31 @@ let resolve ~search path =
   |> List.map (fun dir -> Filename.concat dir (path ^ extension))
   |> List.find_opt Sys.file_exists
 
-let build ~root =
+(* [walk] resolves the import graph, taking parsing from [parse] so that the caller decides
+   what a parse is worth caching. Imports are acyclic: an edge that closes a cycle is reported
+   at the import that closes it and is not followed. *)
+let walk ~root ~parse =
   let root_dir = Filename.dirname root in
-  let rec visit seen acc file =
+  let cycle start chain =
+    let rec from = function
+      | [] -> []
+      | file :: rest -> if file = start then (file :: rest) @ [ file ] else from rest
+    in
+    String.concat " -> " (from chain)
+  in
+  let rec visit stack seen acc file =
     if List.mem file seen then (seen, acc)
     else
       let seen = file :: seen in
-      let parsed = Pipeline.parse_file file in
-      match parsed.result with
-      | Error ds -> (seen, { acc with diagnostics = acc.diagnostics @ ds })
+      match parse file with
+      | Error ds ->
+          (* Still a module in the build: its imports are unknown, not absent, so it gets no
+             edges. Dropping it here would make its diagnostics unreachable by file. *)
+          ( seen,
+            {
+              nodes = { file; edges = [] } :: acc.nodes;
+              diagnostics = acc.diagnostics @ ds;
+            } )
       | Ok program ->
           let search = Filename.dirname file :: [ root_dir ] in
           let edges =
@@ -35,7 +51,7 @@ let build ~root =
                    | Some _ -> None
                    | None ->
                        Some
-                         (Diagnostics.error
+                         (Diagnostics.error ~loc:e.spec.span
                             (Printf.sprintf "cannot resolve import '%s'" e.spec.path)))
           in
           let acc =
@@ -44,10 +60,25 @@ let build ~root =
               diagnostics = acc.diagnostics @ unresolved;
             }
           in
-          let deps = List.filter_map (fun e -> e.resolved) edges in
-          List.fold_left (fun (seen, acc) dep -> visit seen acc dep) (seen, acc) deps
+          edges
+          |> List.filter_map (fun (e : edge) ->
+                 Option.map (fun dep -> (e.spec, dep)) e.resolved)
+          |> List.fold_left
+               (fun (seen, acc) ((spec : Ast.import_decl), dep) ->
+                 if dep = file || List.mem dep stack then
+                   let message =
+                     Printf.sprintf "import cycle: %s" (cycle dep (List.rev (file :: stack)))
+                   in
+                   ( seen,
+                     {
+                       acc with
+                       diagnostics =
+                         acc.diagnostics @ [ Diagnostics.error ~loc:spec.span message ];
+                     } )
+                 else visit (file :: stack) seen acc dep)
+               (seen, acc)
   in
-  let _, acc = visit [] { nodes = []; diagnostics = [] } root in
+  let _, acc = visit [] [] { nodes = []; diagnostics = [] } root in
   { nodes = List.rev acc.nodes; diagnostics = acc.diagnostics }
 
 let describe (i : Ast.import_decl) = Pprint.import i

@@ -195,7 +195,7 @@ let test_deps () =
   Unix.mkdir (Filename.concat dir "mylib") 0o755;
   write "main.rh" "import mylib/helper\n\nmain = fn() never -> do\n  res = helper::add(1, 2)\nend\n";
   write "mylib/helper.rh" "add = fn(a i32, b i32) i32 -> a + b\n";
-  let graph = Deps.build ~root:(Filename.concat dir "main.rh") in
+  let graph = Build.discover (Build.create ()) ~root:(Filename.concat dir "main.rh") in
   Alcotest.(check int) "main plus one dependency" 2 (List.length graph.nodes);
   Alcotest.(check (list string)) "no diagnostics" []
     (List.map Diagnostics.to_string graph.diagnostics);
@@ -215,8 +215,41 @@ let test_deps_cycle () =
   in
   write "a.rh" "import b\n\na = 1\n";
   write "b.rh" "import a\n\nb = 2\n";
-  let graph = Deps.build ~root:(Filename.concat dir "a.rh") in
-  Alcotest.(check int) "cycle terminates" 2 (List.length graph.nodes)
+  let build = Build.create () in
+  let root = Filename.concat dir "a.rh" in
+  let graph = Build.discover build ~root in
+  Alcotest.(check int) "cycle terminates" 2 (List.length graph.nodes);
+  Alcotest.(check int) "the import that closes it is reported" 1
+    (List.length graph.diagnostics);
+  Alcotest.(check int) "it lands on the file with the back edge" 1
+    (List.length (Node.get (Build.diagnostics build (Filename.concat dir "b.rh"))));
+  Alcotest.(check int) "and not on the file it points back to" 0
+    (List.length (Node.get (Build.diagnostics build root)))
+
+let test_file_diagnostics () =
+  let dir = Filename.temp_file "rhodium_file_diagnostics" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  let write name content =
+    Out_channel.with_open_text (Filename.concat dir name) (fun oc ->
+        Out_channel.output_string oc content)
+  in
+  write "clean.rh" "clean = 1\n";
+  write "broken.rh" "broken = (\n";
+  write "importer.rh" "import nowhere\n\nimporter = 1\n";
+  write "main.rh" "import clean\nimport broken\nimport importer\n\nmain = 1\n";
+  let build = Build.create () in
+  ignore (Build.discover build ~root:(Filename.concat dir "main.rh"));
+  let diagnostics name = Node.get (Build.diagnostics build (Filename.concat dir name)) in
+  Alcotest.(check int) "clean file has none" 0 (List.length (diagnostics "clean.rh"));
+  Alcotest.(check int) "a syntax error stays in its file" 1
+    (List.length (diagnostics "broken.rh"));
+  Alcotest.(check int) "an unresolved import lands on the importer" 1
+    (List.length (diagnostics "importer.rh"));
+  Alcotest.(check int) "the file itself is clean" 0 (List.length (diagnostics "main.rh"));
+  Build.set_source build (Filename.concat dir "clean.rh") "clean = (\n";
+  Alcotest.(check int) "an edit reaches the diagnostics node" 1
+    (List.length (diagnostics "clean.rh"))
 
 let test_deps_unresolved () =
   let dir = Filename.temp_file "rhodium_missing" "" in
@@ -224,8 +257,94 @@ let test_deps_unresolved () =
   Unix.mkdir dir 0o755;
   Out_channel.with_open_text (Filename.concat dir "main.rh") (fun oc ->
       Out_channel.output_string oc "import nope/missing\n\nmain = 1\n");
-  let graph = Deps.build ~root:(Filename.concat dir "main.rh") in
+  let graph = Build.discover (Build.create ()) ~root:(Filename.concat dir "main.rh") in
   Alcotest.(check int) "reports unresolved import" 1 (List.length graph.diagnostics)
+
+let test_unparseable_file_is_a_node () =
+  let dir = Filename.temp_file "rhodium_unparseable" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  let write name content =
+    Out_channel.with_open_text (Filename.concat dir name) (fun oc ->
+        Out_channel.output_string oc content)
+  in
+  write "main.rh" "import broken\n\nmain = 1\n";
+  write "broken.rh" "broken = (\n";
+  let build = Build.create () in
+  let graph = Build.discover build ~root:(Filename.concat dir "main.rh") in
+  Alcotest.(check int) "both files are nodes" 2 (List.length graph.nodes);
+  Alcotest.(check (list string)) "and both parse" [ "broken.rh"; "main.rh" ]
+    (List.map Filename.basename (List.map (fun (n : Deps.node) -> n.file) graph.nodes)
+    |> List.sort compare);
+  Alcotest.(check int) "the broken file reports its error once" 1
+    (List.length (Node.get (Build.diagnostics build (Filename.concat dir "broken.rh"))))
+
+let test_node_memoizes () =
+  let n = Node.create (fun () -> 41) in
+  Alcotest.(check int) "value" 41 (Node.get n);
+  Alcotest.(check int) "value again" 41 (Node.get n);
+  Alcotest.(check int) "executed once" 1 (Node.executions n)
+
+let test_node_recomputes_only_when_a_dependency_changes () =
+  let source = Node.input ~eq:Int.equal 1 in
+  let mapped = Node.create (fun () -> Node.get source + 1) in
+  Alcotest.(check int) "first read" 2 (Node.get mapped);
+  Node.set source 1;
+  Alcotest.(check int) "same input value" 2 (Node.get mapped);
+  Alcotest.(check int) "no recomputation" 1 (Node.executions mapped);
+  Node.set source 10;
+  Alcotest.(check int) "changed input" 11 (Node.get mapped);
+  Alcotest.(check int) "one recomputation" 2 (Node.executions mapped)
+
+let test_node_cutoff_stops_dependents () =
+  let source = Node.input ~eq:Int.equal 1 in
+  let positive = Node.create ~eq:Bool.equal (fun () -> Node.get source > 0) in
+  let answer = Node.create (fun () -> if Node.get positive then "yes" else "no") in
+  Alcotest.(check string) "first read" "yes" (Node.get answer);
+  Node.set source 5;
+  Alcotest.(check string) "same answer" "yes" (Node.get answer);
+  Alcotest.(check int) "the middle node recomputed" 2 (Node.executions positive);
+  Alcotest.(check int) "its dependent did not" 1 (Node.executions answer)
+
+let with_project files f =
+  let dir = Filename.temp_file "rhodium_inc" "" in
+  Sys.remove dir;
+  Unix.mkdir dir 0o755;
+  List.iter
+    (fun (name, content) ->
+      Out_channel.with_open_text (Filename.concat dir name) (fun oc ->
+          Out_channel.output_string oc content))
+    files;
+  f dir
+
+let test_build_reparses_only_changed () =
+  with_project
+    [ ("main.rh", "import lib\n\nmain = 1\n"); ("lib.rh", "lib = 2\n") ]
+    (fun dir ->
+      let build = Build.create () in
+      let root = Filename.concat dir "main.rh" in
+      let lib = Filename.concat dir "lib.rh" in
+      ignore (Build.discover build ~root);
+      Alcotest.(check int) "both files parsed" 2 (Build.parses build);
+      ignore (Build.discover build ~root);
+      Alcotest.(check int) "second walk parses nothing" 2 (Build.parses build);
+      Build.set_source build lib "lib = 2\n";
+      ignore (Build.discover build ~root);
+      Alcotest.(check int) "same text is not reparsed" 2 (Build.parses build);
+      Build.set_source build lib "lib = 3\n";
+      ignore (Build.discover build ~root);
+      Alcotest.(check int) "one changed file, one parse" 3 (Build.parses build))
+
+let test_build_keeps_parse_errors_as_values () =
+  with_project [ ("main.rh", "main = (\n") ] (fun dir ->
+      let build = Build.create () in
+      let root = Filename.concat dir "main.rh" in
+      let graph = Build.discover build ~root in
+      Alcotest.(check bool) "reported" true (graph.Deps.diagnostics <> []);
+      let graph = Build.discover build ~root in
+      Alcotest.(check bool) "reported again from the memoized failure" true
+        (graph.Deps.diagnostics <> []);
+      Alcotest.(check int) "parsed once" 1 (Build.parses build))
 
 let () =
   Alcotest.run "rhodium"
@@ -285,8 +404,11 @@ let () =
       ( "deps",
         [
           Alcotest.test_case "resolve and render" `Quick test_deps;
-          Alcotest.test_case "cycle terminates" `Quick test_deps_cycle;
+          Alcotest.test_case "cycle is reported" `Quick test_deps_cycle;
           Alcotest.test_case "unresolved import" `Quick test_deps_unresolved;
+          Alcotest.test_case "diagnostics are per file" `Quick test_file_diagnostics;
+          Alcotest.test_case "unparseable file stays in the graph" `Quick
+            test_unparseable_file_is_a_node;
         ] );
       ( "diagnostics",
         [
@@ -302,5 +424,15 @@ let () =
         [
           Alcotest.test_case "tight subexpressions" `Quick test_spans_are_tight;
           Alcotest.test_case "block spans delimiters" `Quick test_block_spans_cover_delimiters;
+        ] );
+      ( "incremental",
+        [
+          Alcotest.test_case "node memoizes" `Quick test_node_memoizes;
+          Alcotest.test_case "recomputes on dependency change" `Quick
+            test_node_recomputes_only_when_a_dependency_changes;
+          Alcotest.test_case "cutoff stops dependents" `Quick test_node_cutoff_stops_dependents;
+          Alcotest.test_case "reparses only changed" `Quick test_build_reparses_only_changed;
+          Alcotest.test_case "parse errors are values" `Quick
+            test_build_keeps_parse_errors_as_values;
         ] );
     ]
