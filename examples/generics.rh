@@ -1,0 +1,27 @@
+# Type parameters and the bounds they carry.
+#
+# This file exercises syntax only: `check` parses it, nothing resolves the
+# bounds or the types yet, so the bodies below are deliberately trivial
+# rather than type-correct. The checker comes later.
+
+type Pair[A: Copy, B] = {
+  first  A
+  second B
+} where {
+  # An associated item: its first parameter is the receiver.
+  swap = fn[A, B](p Pair[A, B]) Pair[B, A] -> p
+}
+
+# A lambda binds its own parameter, and states the bound it relies on.
+keep = fn[T: Copy](x T) T -> x
+
+# Several parameters, with a bound on one of them and none on the other.
+first = fn[A: Copy, B](a A, b B) A -> keep(a)
+
+# Several bounds on one parameter.
+both = fn[T: Copy + Eq](x T, y T) T -> keep(x)
+
+main = fn() never -> do
+  n = first(1, 2)
+  both(n, n)
+end

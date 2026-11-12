@@ -25,7 +25,10 @@ let rec ty (t : Ast.ty) =
   match t.desc with
   | Ast.TName (n, []) -> n
   | Ast.TName (n, args) -> Printf.sprintf "%s[%s]" n (String.concat ", " (List.map ty args))
+  | Ast.TFn (ps, r) -> Printf.sprintf "fn(%s) %s" (String.concat ", " (List.map ty ps)) (ty r)
   | Ast.TTuple ts -> Printf.sprintf "{%s}" (String.concat ", " (List.map ty ts))
+  | Ast.TPtr t -> Printf.sprintf "(ptr %s)" (ty t)
+  | Ast.TMutPtr t -> Printf.sprintf "(mut-ptr %s)" (ty t)
 
 let rec expr (e : Ast.expr) =
   match e.desc with
@@ -35,8 +38,11 @@ let rec expr (e : Ast.expr) =
   | Ast.ETuple es -> Printf.sprintf "{%s}" (String.concat ", " (List.map expr es))
   | Ast.ECtor (c, es) -> app c (List.map expr es)
   | Ast.ECall (f, args) -> app (expr f) (List.map expr args)
-  | Ast.EFn (ps, r, b) ->
-      Printf.sprintf "(fn (%s) %s %s)" (String.concat ", " (List.map param ps)) (ty r) (expr b)
+  | Ast.EField (e, n) -> Printf.sprintf "(. %s %s)" (expr e) n
+  | Ast.EFn (tps, ps, r, b) ->
+      let generics = match tps with [] -> "" | _ -> type_params tps in
+      Printf.sprintf "(fn%s (%s) %s %s)" generics
+        (String.concat ", " (List.map param ps)) (ty r) (expr b)
   | Ast.EDo ss -> Printf.sprintf "(do %s)" (String.concat " " (List.map stmt ss))
   | Ast.EMatch (e, arms) ->
       Printf.sprintf "(match %s %s)" (expr e) (String.concat " " (List.map arm arms))
@@ -47,6 +53,13 @@ let rec expr (e : Ast.expr) =
 
 and param (p : Ast.param) = Printf.sprintf "%s %s" p.name (ty p.ty)
 
+and type_param (p : Ast.type_param) =
+  match p.bounds with
+  | [] -> p.name
+  | bs -> Printf.sprintf "%s: %s" p.name (String.concat " + " (List.map ty bs))
+
+and type_params ps = "[" ^ String.concat ", " (List.map type_param ps) ^ "]"
+
 and stmt (s : Ast.stmt) =
   match s.desc with
   | Ast.SAssign (p, e) -> Printf.sprintf "(= %s %s)" (expr p) (expr e)
@@ -54,10 +67,17 @@ and stmt (s : Ast.stmt) =
 
 and arm (a : Ast.arm) = Printf.sprintf "(%s %s)" (expr a.pattern) (expr a.body)
 
+let variant (v : Ast.variant) = app ("variant " ^ v.name) (List.map ty v.args)
+
 let member (m : Ast.member) =
   match m.desc with
   | Ast.MField (n, t) -> Printf.sprintf "(field %s %s)" n (ty t)
   | Ast.MGlobal (n, e) -> Printf.sprintf "(global %s %s)" n (expr e)
+
+let associated ws =
+  match ws with
+  | [] -> []
+  | ws -> [ Printf.sprintf "(where %s)" (String.concat " " (List.map member ws)) ]
 
 let rec sel (s : Ast.import_sel) =
   match s.desc with
@@ -75,9 +95,14 @@ let import (i : Ast.import_decl) =
 let decl (d : Ast.decl) =
   match d.desc with
   | Ast.DBind (x, e) -> Printf.sprintf "(let %s %s)" x (expr e)
-  | Ast.DType (n, ps, ms) ->
-      Printf.sprintf "(type %s[%s] %s)" n (String.concat ", " ps)
-        (String.concat " " (List.map member ms))
+  | Ast.DType (n, ps, fs, ws) ->
+      Printf.sprintf "(type %s%s %s)" n (type_params ps)
+        (String.concat " " (List.map member fs @ associated ws))
+  | Ast.DSum (n, ps, vs, ws) ->
+      Printf.sprintf "(sum %s%s %s)" n (type_params ps)
+        (String.concat " " (List.map variant vs @ associated ws))
+  | Ast.DNewtype (n, ps, t) ->
+      Printf.sprintf "(newtype %s%s %s)" n (type_params ps) (ty t)
   | Ast.DImport i -> import i
 
 let program ds = String.concat "\n" (List.map decl ds)

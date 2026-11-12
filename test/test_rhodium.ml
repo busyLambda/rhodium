@@ -25,7 +25,7 @@ let test_spans_are_tight () =
 
 let test_block_spans_cover_delimiters () =
   match parse "f = fn() never -> do\n  x = 1\nend" with
-  | [ { Ast.desc = Ast.DBind (_, { Ast.desc = Ast.EFn (_, _, body); span = fspan }); _ } ] -> (
+  | [ { Ast.desc = Ast.DBind (_, { Ast.desc = Ast.EFn (_, _, _, body); span = fspan }); _ } ] -> (
       Alcotest.(check (pair int int)) "fn spans to end" (1, 3) (span_lines fspan);
       match body.Ast.desc with
       | Ast.EDo [ s ] ->
@@ -37,6 +37,31 @@ let test_block_spans_cover_delimiters () =
 let test_fn () =
   check "function binding" "(let add (fn (a i32, b i32) i32 (+ a b)))"
     "add = fn(a i32, b i32) i32 -> a + b"
+
+let test_fn_binds_type_params () =
+  check "fn type parameters" "(let id (fn[P] (x P) P x))" "id = fn[P](x P) P -> x"
+
+let test_pointer_type () =
+  check "pointer field" "(type T[] (field head (ptr I)))" "type T = {\n  head *I\n}"
+
+let test_mut_pointer_type () =
+  check "mutable pointer field" "(type T[] (field head (mut-ptr I)))"
+    "type T = {\n  head *mut I\n}"
+
+let test_mut_pointer_param () =
+  check "mutable pointer param" "(let f (fn (p (mut-ptr I)) i32 1))" "f = fn(p *mut I) i32 -> 1"
+
+let test_pointer_type_args () =
+  check "pointer in a type argument" "(let f (fn (l (ptr List[I])) Maybe[(ptr I)] 1))"
+    "f = fn(l *List[I]) Maybe[*I] -> 1"
+
+let test_type_param_bounds () =
+  check "type parameter bounds" "(type Record[T: Copy] (field item T))"
+    "type Record[T: Copy] = {\n  item T\n}"
+
+let test_type_param_many_bounds () =
+  check "several bounds" "(type Pair[T: Copy + Eq] (field item T))"
+    "type Pair[T: Copy + Eq] = {\n  item T\n}"
 
 let test_tuple_ret () =
   check "tuple return" "(let retTuple (fn (a i32, b i32) {i32, i32} {a, b}))"
@@ -66,10 +91,63 @@ let test_generic_ty () =
 
 let test_type_decl () =
   check "type decl"
-    "(type List[T] (field capacity u32) (field length u32) (field head opaque_ptr) \
-     (global head (fn (list List[T]) Maybe[T] (match list ([x:...] (Something x)) (_ (Nothing))))))"
-    "type List[T] = {\n  capacity u32\n  length   u32\n  head     opaque_ptr\n\n  head = \
-     fn(list List[T]) Maybe[T] -> match list\n  | [x:...] -> Something(x)\n  | _       -> Nothing\n}"
+    "(type List[T] (field capacity u32) (field length u32) (field head opaque_ptr))"
+    "type List[T] = {\n  capacity u32\n  length   u32\n  head     opaque_ptr\n}"
+
+let test_where_block () =
+  check "where block"
+    "(type List[T] (field capacity u32) (where (global head (fn (list List[T]) Maybe[T] \
+     (match list ([x:...] (Something x)) (_ (Nothing)))))))"
+    "type List[T] = {\n  capacity u32\n} where {\n  head = fn(list List[T]) Maybe[T] -> \
+     match list\n  | [x:...] -> Something(x)\n  | _ -> Nothing\n}"
+
+let test_associated_item_needs_where () =
+  match
+    Pipeline.parse_string ~filename:"<test>" "type T = {\n  f i32\n  g = fn() i32 -> 1\n}"
+  with
+  | Ok _ -> Alcotest.fail "expected an associated item inside a record body to be rejected"
+  | Error _ -> ()
+
+let test_sum_decl () =
+  check "sum decl" "(sum Result[P, E] (variant Success P) (variant Failure E))"
+    "type Result[P, E] =\n| Success(P)\n| Failure(E)"
+
+let test_sum_with_where () =
+  check "sum with where"
+    "(sum Maybe[P] (variant Something P) (variant Nothing) \
+     (where (global keep (fn[P] (m Maybe[P]) Maybe[P] m))))"
+    "type Maybe[P] =\n| Something(P)\n| Nothing\nwhere {\n  keep = fn[P](m Maybe[P]) \
+     Maybe[P] -> m\n}"
+
+let test_sum_needs_variants () =
+  match Pipeline.parse_string ~filename:"<test>" "type X =\n" with
+  | Ok _ -> Alcotest.fail "expected a sum without variants to be rejected"
+  | Error _ -> ()
+
+let test_newtype () = check "newtype" "(newtype Ptr[T] usize)" "type Ptr[T] = usize"
+
+let test_braces_stay_a_record () =
+  check "braces still make a record" "(type X[] (field a b))" "type X = {\n  a b\n}"
+
+let test_fn_ty_param () =
+  check "function type as a param type" "(let f (fn (g fn(i32) i32) i32 1))"
+    "f = fn(g fn(i32) i32) i32 -> 1"
+
+let test_fn_ty_field () =
+  check "function type in a field" "(type X[] (field f fn(i32) i32))" "type X = {\n  f fn(i32) i32\n}"
+
+let test_field () = check "field access" "(let x (. l head))" "x = l.head"
+
+let test_field_nests_left () =
+  check "field access nests left" "(let x (. (. a b) c))" "x = a.b.c"
+
+let test_field_binds_tighter_than_application () =
+  check "field access binds tighter than application" "(let x (. (f 1) y))" "x = f(1).y"
+
+let test_field_after_neg () = check "field access after neg" "(let x (- (. a b)))" "x = -a.b"
+
+let test_field_after_not () =
+  check "field access after not" "(let x (not (. p flag)))" "x = not p.flag"
 
 let test_comments () = check "comments" "(let x 1)" "# leading\nx = 1 # trailing"
 
@@ -361,9 +439,38 @@ let () =
           Alcotest.test_case "match arms" `Quick test_match;
           Alcotest.test_case "generic type" `Quick test_generic_ty;
           Alcotest.test_case "type decl" `Quick test_type_decl;
+          Alcotest.test_case "where block" `Quick test_where_block;
+          Alcotest.test_case "associated item needs where" `Quick
+            test_associated_item_needs_where;
+          Alcotest.test_case "fn binds type params" `Quick test_fn_binds_type_params;
+          Alcotest.test_case "type param bounds" `Quick test_type_param_bounds;
+          Alcotest.test_case "pointer field" `Quick test_pointer_type;
+          Alcotest.test_case "mutable pointer field" `Quick test_mut_pointer_type;
+          Alcotest.test_case "mutable pointer param" `Quick test_mut_pointer_param;
+          Alcotest.test_case "pointer in type args" `Quick test_pointer_type_args;
+          Alcotest.test_case "several bounds" `Quick test_type_param_many_bounds;
           Alcotest.test_case "comments" `Quick test_comments;
           Alcotest.test_case "qualified call" `Quick test_qualified_call;
           Alcotest.test_case "division" `Quick test_division;
+        ] );
+      ( "types",
+        [
+          Alcotest.test_case "sum decl" `Quick test_sum_decl;
+          Alcotest.test_case "sum with where" `Quick test_sum_with_where;
+          Alcotest.test_case "sum needs variants" `Quick test_sum_needs_variants;
+          Alcotest.test_case "newtype" `Quick test_newtype;
+          Alcotest.test_case "braces stay a record" `Quick test_braces_stay_a_record;
+          Alcotest.test_case "fn type as a param" `Quick test_fn_ty_param;
+          Alcotest.test_case "fn type in a field" `Quick test_fn_ty_field;
+        ] );
+      ( "fields",
+        [
+          Alcotest.test_case "field access" `Quick test_field;
+          Alcotest.test_case "field nests left" `Quick test_field_nests_left;
+          Alcotest.test_case "tighter than application" `Quick
+            test_field_binds_tighter_than_application;
+          Alcotest.test_case "after neg" `Quick test_field_after_neg;
+          Alcotest.test_case "after not" `Quick test_field_after_not;
         ] );
       ( "binops",
         [

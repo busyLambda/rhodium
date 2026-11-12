@@ -1,0 +1,37 @@
+# Syntax only: this file exercises sum declarations, a nominal newtype,
+# function types and field access. Nothing resolves them yet, so the bodies
+# below are deliberately trivial rather than type-correct.
+
+type Result[P, E] =
+| Success(P)
+| Failure(E)
+
+type Callback =
+| Ready(fn(i32) i32)
+| Waiting
+
+type Maybe[P] =
+| Something(P)
+| Nothing
+where {
+  keep = fn[P](m Maybe[P]) Maybe[P] -> m
+}
+
+type Ptr[T] = usize
+
+type Pair[A, B] = {
+  first  A
+  second B
+  apply  fn(A) B
+}
+
+unwrap = fn(r Result[i32, i32]) i32 -> match r
+| Success(x) -> x
+| Failure(_) -> 0
+
+run = fn(p Ptr[i32], f fn(i32) i32) i32 -> f(1)
+
+main = fn(pair Pair[i32, i32]) never -> do
+  x = pair.first
+  y = pair.second
+end

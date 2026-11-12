@@ -4,9 +4,9 @@ let sp = Loc.of_lexing
 
 %token <int> INT
 %token <string> IDENT CTOR
-%token IMPORT TYPE FN DO END MATCH
+%token IMPORT TYPE FN DO END MATCH WHERE MUT
 %token NOT AND OR NOR XOR IS ISNT
-%token ARROW EQ BAR COLON COLONCOLON COMMA ELLIPSIS UNDERSCORE STAR
+%token ARROW EQ BAR COLON COLONCOLON COMMA ELLIPSIS DOT UNDERSCORE STAR
 %token LPAREN RPAREN LBRACE RBRACE LBRACK RBRACK
 %token PIPE LT LE GT GE PLUS MINUS SLASH PERCENT
 %token NEWLINE EOF
@@ -35,8 +35,12 @@ decls:
 
 decl:
   | i = import_decl { Ast.mk_decl (sp $startpos $endpos) (Ast.DImport i) }
-  | TYPE; n = name; ps = type_params; EQ; ms = record
-      { Ast.mk_decl (sp $startpos $endpos) (Ast.DType (n, ps, ms)) }
+  | TYPE; n = name; ps = type_params; EQ; ms = record; ws = where_block
+      { Ast.mk_decl (sp $startpos $endpos) (Ast.DType (n, ps, ms, ws)) }
+  | TYPE; n = name; ps = type_params; EQ; vs = variants; ws = where_block
+      { Ast.mk_decl (sp $startpos $endpos) (Ast.DSum (n, ps, List.rev vs, ws)) }
+  | TYPE; n = name; ps = type_params; EQ; t = repr_ty
+      { Ast.mk_decl (sp $startpos $endpos) (Ast.DNewtype (n, ps, t)) }
   | x = IDENT; EQ; e = expr { Ast.mk_decl (sp $startpos $endpos) (Ast.DBind (x, e)) }
 
 import_decl:
@@ -64,25 +68,79 @@ sel_item:
 
 type_params:
   | { [] }
-  | LBRACK; ps = separated_list(COMMA, name); RBRACK { ps }
+  | LBRACK; ps = separated_list(COMMA, type_param); RBRACK { ps }
+
+type_param:
+  | n = name; bs = bounds { Ast.mk_type_param (sp $startpos $endpos) n bs }
+
+bounds:
+  | { [] }
+  | COLON; bs = separated_list(PLUS, ty) { bs }
 
 record:
-  | LBRACE; ms = members; RBRACE { List.rev ms }
+  | LBRACE; fs = fields; RBRACE { List.rev fs }
 
-members:
+fields:
   | { [] }
-  | ms = members; NEWLINE { ms }
-  | m = member { [ m ] }
-  | ms = members; NEWLINE; m = member { m :: ms }
+  | fs = fields; NEWLINE { fs }
+  | f = field { [ f ] }
+  | fs = fields; NEWLINE; f = field { f :: fs }
 
-member:
+field:
   | n = name; t = ty { Ast.mk_member (sp $startpos $endpos) (Ast.MField (n, t)) }
+
+(* A nominal newtype's representation. Deliberately not [ty]: a leading brace
+   would be a record body, and [ty]'s brace form is ambiguous with it. *)
+repr_ty:
+  | n = name; args = ty_args { Ast.mk_ty (sp $startpos $endpos) (Ast.TName (n, args)) }
+
+(* The lexer drops the newline before a [|] and before [where], so arms and
+   variants need no separator of their own and the where section may start on
+   the following line. *)
+variants:
+  | v = variant { [ v ] }
+  | vs = variants; v = variant { v :: vs }
+
+variant:
+  | BAR; n = name { Ast.mk_variant (sp $startpos $endpos) n [] }
+  | BAR; n = name; LPAREN; ts = separated_list(COMMA, ty); RPAREN
+      { Ast.mk_variant (sp $startpos $endpos) n ts }
+
+(* The braces after the name are the shape; associated items live here. An
+   associated item's first parameter is the receiver, so no [self] is needed. *)
+where_block:
+  | { [] }
+  | WHERE; LBRACE; gs = associated; RBRACE { List.rev gs }
+
+associated:
+  | { [] }
+  | gs = associated; NEWLINE { gs }
+  | g = associated_item { [ g ] }
+  | gs = associated; NEWLINE; g = associated_item { g :: gs }
+
+associated_item:
   | n = name; EQ; e = expr { Ast.mk_member (sp $startpos $endpos) (Ast.MGlobal (n, e)) }
 
 expr:
   | e1 = expr; op = binop; e2 = expr
       { Ast.mk_expr (sp $startpos $endpos) (Ast.EBinop (op, e1, e2)) }
+  | u = unary { u }
+  | f = fn_expr { f }
+  | m = match_expr { m }
+
+(* Unary binds looser than field access: [-a.b] is [(- (. a b))]. fn and match
+   literals are expr-level rather than atoms, so a [.] applied to one needs
+   parentheses: [(fn() i32 -> 1).f]. *)
+unary:
+  | NOT; a = unary { Ast.mk_expr (sp $startpos $endpos) (Ast.EUnop (Ast.Not, a)) }
+  | MINUS; a = unary { Ast.mk_expr (sp $startpos $endpos) (Ast.EUnop (Ast.Neg, a)) }
+  | p = postfix { p }
+
+(* Field access binds tighter than application: [f(x).y] is [(f x).y]. *)
+postfix:
   | a = atom { a }
+  | e = postfix; DOT; n = name
+      { Ast.mk_expr (sp $startpos $endpos) (Ast.EField (e, n)) }
 
 %inline binop:
   | PIPE { Ast.Pipe }
@@ -106,8 +164,6 @@ atom:
   | n = INT { Ast.mk_expr (sp $startpos $endpos) (Ast.EInt n) }
   | LPAREN; RPAREN { Ast.mk_expr (sp $startpos $endpos) Ast.EUnit }
   | LPAREN; e = expr; RPAREN { e }
-  | MINUS; a = atom { Ast.mk_expr (sp $startpos $endpos) (Ast.EUnop (Ast.Neg, a)) }
-  | NOT; a = atom { Ast.mk_expr (sp $startpos $endpos) (Ast.EUnop (Ast.Not, a)) }
   | x = IDENT; args = args
       { Ast.mk_expr (sp $startpos $endpos)
           (Ast.ECall (Ast.mk_expr (sp $startpos(x) $endpos(x)) (Ast.EVar x), args)) }
@@ -134,9 +190,7 @@ atom:
   | UNDERSCORE { Ast.mk_expr (sp $startpos $endpos) Ast.EWildcard }
   | LBRACK; e = expr; COLON; ELLIPSIS; RBRACK
       { Ast.mk_expr (sp $startpos $endpos) (Ast.EListHead e) }
-  | f = fn_expr { f }
   | d = do_block { d }
-  | m = match_expr { m }
 
 qname:
   | x = name { x }
@@ -146,8 +200,9 @@ args:
   | LPAREN; es = separated_list(COMMA, expr); RPAREN { es }
 
 fn_expr:
-  | FN; LPAREN; ps = separated_list(COMMA, param); RPAREN; r = ty; ARROW; b = expr
-      { Ast.mk_expr (sp $startpos $endpos) (Ast.EFn (ps, r, b)) }
+  | FN; tps = type_params; LPAREN; ps = separated_list(COMMA, param); RPAREN; r = ty; ARROW;
+    b = expr
+      { Ast.mk_expr (sp $startpos $endpos) (Ast.EFn (tps, ps, r, b)) }
 
 param:
   | x = IDENT; t = ty { Ast.mk_param (sp $startpos $endpos) x t }
@@ -178,8 +233,12 @@ arm:
 
 ty:
   | n = name; args = ty_args { Ast.mk_ty (sp $startpos $endpos) (Ast.TName (n, args)) }
+  | FN; LPAREN; ts = separated_list(COMMA, ty); RPAREN; r = ty
+      { Ast.mk_ty (sp $startpos $endpos) (Ast.TFn (ts, r)) }
   | LBRACE; ts = separated_list(COMMA, ty); RBRACE
       { Ast.mk_ty (sp $startpos $endpos) (Ast.TTuple ts) }
+  | STAR; t = ty { Ast.mk_ty (sp $startpos $endpos) (Ast.TPtr t) }
+  | STAR; MUT; t = ty { Ast.mk_ty (sp $startpos $endpos) (Ast.TMutPtr t) }
 
 ty_args:
   | { [] }

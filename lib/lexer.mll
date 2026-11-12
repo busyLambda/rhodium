@@ -24,6 +24,8 @@ rule token = parse
   | "do" { DO }
   | "end" { END }
   | "match" { MATCH }
+  | "where" { WHERE }
+  | "mut" { MUT }
   | "not" { NOT }
   | "and" { AND }
   | "or" { OR }
@@ -33,6 +35,7 @@ rule token = parse
   | "is" { IS }
   | "->" { ARROW }
   | "..." { ELLIPSIS }
+  | '.' { DOT }
   | "::" { COLONCOLON }
   | "|>" { PIPE }
   | "<=" { LE }
@@ -79,9 +82,9 @@ let rec next_lexeme lexbuf =
     | NEWLINE ->
         pending_newline := Some (Loc.of_lexing lexbuf.lex_start_p lexbuf.lex_curr_p);
         next_lexeme lexbuf
-    | BAR ->
+    | (BAR | WHERE) as tok ->
         pending_newline := None;
-        (BAR, Lexing.lexeme lexbuf, Loc.of_lexing lexbuf.lex_start_p lexbuf.lex_curr_p)
+        (tok, Lexing.lexeme lexbuf, Loc.of_lexing lexbuf.lex_start_p lexbuf.lex_curr_p)
     | EOF -> (
         match !pending_newline with
         | Some loc ->

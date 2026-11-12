@@ -1,9 +1,20 @@
 type span = Loc.t
 
 type ty = { desc : ty_desc; span : span }
-and ty_desc = TName of string * ty list | TTuple of ty list
+and ty_desc =
+  | TName of string * ty list
+  | TTuple of ty list
+  (* [*T] and [*mut T]: raw pointers, the untraced handles tracked by nobody. *)
+  | TPtr of ty
+  | TMutPtr of ty | TFn of ty list * ty
 
 type param = { name : string; ty : ty; span : span }
+
+(* A type parameter of a type declaration or a lambda, with the contracts it must satisfy. *)
+type type_param = { name : string; bounds : ty list; span : span }
+
+(* One alternative of a sum declaration; [args] is its payload. *)
+type variant = { name : string; args : ty list; span : span }
 
 type binop =
   | Pipe
@@ -34,7 +45,8 @@ and expr_desc =
   | ECtor of string * expr list
   | ETuple of expr list
   | ECall of expr * expr list
-  | EFn of param list * ty * expr
+  | EField of expr * string
+  | EFn of type_param list * param list * ty * expr
   | EDo of stmt list
   | EMatch of expr * arm list
   | EBinop of binop * expr * expr
@@ -64,13 +76,20 @@ type decl = { desc : decl_desc; span : span }
 
 and decl_desc =
   | DBind of string * expr
-  | DType of string * string list * member list
+  (* name, type parameters, shape fields, associated items *)
+  | DType of string * type_param list * member list * member list
+  (* name, type parameters, variants, associated items *)
+  | DSum of string * type_param list * variant list * member list
+  (* name, type parameters, representation *)
+  | DNewtype of string * type_param list * ty
   | DImport of import_decl
 
 type program = decl list
 
 let mk_ty span desc : ty = { desc; span }
 let mk_param span name ty : param = { name; ty; span }
+let mk_type_param span name bounds : type_param = { name; bounds; span }
+let mk_variant span name args : variant = { name; args; span }
 let mk_expr span desc : expr = { desc; span }
 let mk_stmt span desc : stmt = { desc; span }
 let mk_arm span pattern body : arm = { pattern; body; span }
